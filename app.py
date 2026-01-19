@@ -1,144 +1,68 @@
+"""
+ML Dashboard Suite - Main Application
+Interactive Machine Learning Dashboard built with Streamlit
+"""
+
 import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.naive_bayes import GaussianNB, MultinomialNB, BernoulliNB
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, roc_curve, roc_auc_score, classification_report
-)
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-import pickle
-import io
 from datetime import datetime
 
-# Page configuration
-st.set_page_config(
-    page_title="ML Dashboard Suite",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+# Import modules
+from src.config import PAGE_CONFIG, PAGES, CUSTOM_CSS, COLORS
+from src.utils import initialize_session_state, reset_session, get_dataset_info
+from src.data_processing import (
+    load_dataset, get_feature_info, prepare_training_data
+)
+from src.model_training import train_all_models
+from src.visualizations import (
+    plot_model_comparison, plot_feature_importance, plot_decision_boundary,
+    plot_roc_curve, plot_confusion_matrix, plot_target_distribution
+)
+from src.predictions import (
+    prepare_prediction_input, predict_manual, predict_batch, export_predictions
 )
 
-# Custom CSS for styling
-st.markdown("""
-    <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #2563eb;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: white;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 0.5rem 0;
-    }
-    .stButton>button {
-        background-color: #2563eb;
-        color: white;
-        border-radius: 0.5rem;
-        padding: 0.5rem 2rem;
-        font-weight: bold;
-    }
-    .stButton>button:hover {
-        background-color: #1d4ed8;
-    }
-    .success-metric {
-        color: #10b981;
-        font-weight: bold;
-    }
-    .warning-metric {
-        color: #f59e0b;
-        font-weight: bold;
-    }
-    .error-metric {
-        color: #ef4444;
-        font-weight: bold;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# Page configuration
+st.set_page_config(**PAGE_CONFIG)
+
+# Apply custom CSS
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # Initialize session state
-if 'dataset' not in st.session_state:
-    st.session_state.dataset = None
-if 'df' not in st.session_state:
-    st.session_state.df = None
-if 'models' not in st.session_state:
-    st.session_state.models = {}
-if 'model_history' not in st.session_state:
-    st.session_state.model_history = []
-if 'selected_features' not in st.session_state:
-    st.session_state.selected_features = []
-if 'target_variable' not in st.session_state:
-    st.session_state.target_variable = None
-if 'X_train' not in st.session_state:
-    st.session_state.X_train = None
-if 'X_test' not in st.session_state:
-    st.session_state.X_test = None
-if 'y_train' not in st.session_state:
-    st.session_state.y_train = None
-if 'y_test' not in st.session_state:
-    st.session_state.y_test = None
-if 'trained_models' not in st.session_state:
-    st.session_state.trained_models = {}
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "Dashboard"
-if 'feature_encoders' not in st.session_state:
-    st.session_state.feature_encoders = {}
+initialize_session_state()
 
 # Sidebar Navigation
 st.sidebar.markdown("## 📊 MACHINE LEARNING DASHBOARD v2.0")
 st.sidebar.markdown("---")
 
-pages = {
-    "Dashboard": "🏠",
-    "Data Explorer": "🔍",
-    "Model Training": "⚙️",
-    "Visualizations": "📈",
-    "Predictions": "🔮",
-    "Model History": "📚",
-    "Settings": "⚙️"
-}
-
 selected_page = st.sidebar.radio(
     "Navigation",
-    options=list(pages.keys()),
-    format_func=lambda x: f"{pages[x]} {x}",
+    options=list(PAGES.keys()),
+    format_func=lambda x: f"{PAGES[x]} {x}",
     key="page_selector"
 )
 
 st.session_state.current_page = selected_page
 
 # Display dataset info in sidebar
-if st.session_state.df is not None:
+dataset_info = get_dataset_info()
+if dataset_info:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Current Dataset")
-    st.sidebar.info(f"**{st.session_state.dataset}**\n\n"
-                   f"Rows: {len(st.session_state.df)} | "
-                   f"Features: {len(st.session_state.df.columns)} | "
-                   f"Classes: {st.session_state.df[st.session_state.target_variable].nunique() if st.session_state.target_variable else 'N/A'}")
+    st.sidebar.info(
+        f"**{dataset_info['name']}**\n\n"
+        f"Rows: {dataset_info['rows']} | "
+        f"Features: {dataset_info['features']} | "
+        f"Classes: {dataset_info['classes']}"
+    )
 
 if st.sidebar.button("🔄 NEW SESSION", use_container_width=True):
-    for key in list(st.session_state.keys()):
-        if key != 'current_page':
-            del st.session_state[key]
-    st.session_state.current_page = "Dashboard"
+    reset_session()
     st.rerun()
 
-# Dashboard Page
+# ============================================================================
+# DASHBOARD PAGE
+# ============================================================================
 if selected_page == "Dashboard":
     st.markdown('<div class="main-header">MACHINE LEARNING DASHBOARD</div>', unsafe_allow_html=True)
     
@@ -147,8 +71,10 @@ if selected_page == "Dashboard":
     uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'], key="file_uploader")
     
     if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
+        df, error = load_dataset(uploaded_file)
+        if error:
+            st.error(f"Error loading file: {error}")
+        else:
             st.session_state.df = df
             st.session_state.dataset = uploaded_file.name
             
@@ -181,25 +107,21 @@ if selected_page == "Dashboard":
             if st.session_state.selected_features and st.session_state.target_variable:
                 if st.button("✅ Process Dataset", type="primary"):
                     st.success("Dataset processed successfully!")
-        except Exception as e:
-            st.error(f"Error loading file: {str(e)}")
     
-    # Algorithm Selection
+    # Algorithm Selection and Training
     if st.session_state.df is not None and st.session_state.selected_features:
         st.markdown("---")
         st.markdown("### 🤖 ALGORITHM SELECTION")
         
         col1, col2, col3, col4 = st.columns(4)
-        algorithms = {}
-        
         with col1:
-            algorithms['knn'] = st.button("k-NN", use_container_width=True, type="primary" if 'knn' not in st.session_state.trained_models else "secondary")
+            st.button("k-NN", use_container_width=True, type="primary" if 'knn' not in st.session_state.trained_models else "secondary")
         with col2:
-            algorithms['dt'] = st.button("DECISION TREE", use_container_width=True)
+            st.button("DECISION TREE", use_container_width=True)
         with col3:
-            algorithms['rf'] = st.button("RANDOM FOREST", use_container_width=True, type="primary" if 'rf' not in st.session_state.trained_models else "secondary")
+            st.button("RANDOM FOREST", use_container_width=True, type="primary" if 'rf' not in st.session_state.trained_models else "secondary")
         with col4:
-            algorithms['nb'] = st.button("NAIVE BAYES", use_container_width=True)
+            st.button("NAIVE BAYES", use_container_width=True)
         
         # Algorithm Configuration
         st.markdown("---")
@@ -228,18 +150,7 @@ if selected_page == "Dashboard":
         if st.session_state.selected_features:
             st.markdown("---")
             st.markdown("### 📋 Selected Features Info")
-            feature_info = []
-            for feat in st.session_state.selected_features:
-                dtype = st.session_state.df[feat].dtype
-                sample_val = str(st.session_state.df[feat].iloc[0]) if len(st.session_state.df) > 0 else "N/A"
-                is_numeric = pd.api.types.is_numeric_dtype(st.session_state.df[feat])
-                feature_info.append({
-                    'Feature': feat,
-                    'Type': 'Numeric' if is_numeric else 'Text/Categorical',
-                    'Data Type': str(dtype),
-                    'Sample Value': sample_val[:50] + '...' if len(sample_val) > 50 else sample_val
-                })
-            info_df = pd.DataFrame(feature_info)
+            info_df = get_feature_info(st.session_state.df, st.session_state.selected_features)
             st.dataframe(info_df, use_container_width=True, hide_index=True)
             if not all(pd.api.types.is_numeric_dtype(st.session_state.df[feat]) for feat in st.session_state.selected_features):
                 st.info("ℹ️ Some features are text/categorical and will be automatically encoded during training.")
@@ -262,56 +173,15 @@ if selected_page == "Dashboard":
                     with st.spinner("Training models..."):
                         progress_bar = st.progress(0)
                         
-                        # Prepare data
-                        X = st.session_state.df[st.session_state.selected_features].copy()
-                        y = st.session_state.df[st.session_state.target_variable].copy()
-                        
-                        # Check and encode categorical features - more robust detection
-                        categorical_features = []
-                        numerical_features = []
-                        feature_encoders = {}
-                        
-                        for feature in st.session_state.selected_features:
-                            # Try to convert to numeric first
-                            numeric_series = pd.to_numeric(X[feature], errors='coerce')
-                            
-                            # Check if conversion was successful (not all NaN)
-                            if numeric_series.isna().all() or X[feature].dtype == 'object' or X[feature].dtype.name == 'category':
-                                # This is a categorical/text feature - encode it
-                                categorical_features.append(feature)
-                                le = LabelEncoder()
-                                # Handle any NaN values in categorical data
-                                X[feature] = X[feature].fillna('missing_value')
-                                X[feature] = le.fit_transform(X[feature].astype(str))
-                                feature_encoders[feature] = le
-                            else:
-                                # This is numeric, but might have some non-numeric values
-                                numerical_features.append(feature)
-                                X[feature] = numeric_series
-                        
-                        # Fill any NaN values in numerical features with mean
-                        for feature in numerical_features:
-                            if X[feature].isna().any():
-                                X[feature] = X[feature].fillna(X[feature].mean())
-                        
-                        # Ensure all columns are numeric (should be after encoding)
-                        X = X.astype(float)
-                        
-                        # Final check - ensure no NaN or infinite values
-                        if X.isnull().any().any() or np.isinf(X).any().any():
-                            X = X.replace([np.inf, -np.inf], np.nan)
-                            X = X.fillna(X.mean())
-                        
-                        # Encode target if needed
-                        le = LabelEncoder()
-                        y_encoded = le.fit_transform(y.astype(str))
-                        
-                        # Train-test split
-                        test_size = (100 - train_test_split_ratio) / 100
-                        X_train, X_test, y_train, y_test = train_test_split(
-                            X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
+                        # Prepare training data
+                        X_train, X_test, y_train, y_test, le, feature_encoders, categorical_features = prepare_training_data(
+                            st.session_state.df,
+                            st.session_state.selected_features,
+                            st.session_state.target_variable,
+                            train_test_split_ratio
                         )
                         
+                        # Store in session state
                         st.session_state.X_train = X_train
                         st.session_state.X_test = X_test
                         st.session_state.y_train = y_train
@@ -323,73 +193,33 @@ if selected_page == "Dashboard":
                         if categorical_features:
                             st.info(f"📝 Encoded {len(categorical_features)} categorical feature(s): {', '.join(categorical_features)}")
                         
-                        # Train k-NN
+                        # Prepare model configurations
+                        model_config = {
+                            'knn': {
+                                'k': knn_k,
+                                'metric': knn_metric,
+                                'weighted': knn_weighted
+                            },
+                            'rf': {
+                                'trees': rf_trees,
+                                'depth': dt_depth,
+                                'criterion': dt_criterion
+                            },
+                            'nb': {
+                                'type': nb_type,
+                                'smoothing': nb_smoothing
+                            }
+                        }
+                        
+                        # Train all models
                         progress_bar.progress(25)
-                        metric_map = {"Euclidean": "euclidean", "Manhattan": "manhattan", "Minkowski": "minkowski"}
-                        knn_model = KNeighborsClassifier(
-                            n_neighbors=knn_k,
-                            metric=metric_map[knn_metric],
-                            weights="distance" if knn_weighted else "uniform"
-                        )
-                        knn_model.fit(X_train, y_train)
-                        knn_pred = knn_model.predict(X_test)
-                        knn_acc = accuracy_score(y_test, knn_pred)
-                        
-                        st.session_state.trained_models['knn'] = {
-                            'model': knn_model,
-                            'accuracy': knn_acc,
-                            'predictions': knn_pred,
-                            'config': {'k': knn_k, 'metric': knn_metric, 'weighted': knn_weighted}
-                        }
-                        
-                        # Train Random Forest
-                        progress_bar.progress(50)
-                        rf_model = RandomForestClassifier(
-                            n_estimators=rf_trees,
-                            max_depth=dt_depth,
-                            criterion=dt_criterion.lower(),
-                            random_state=42
-                        )
-                        rf_model.fit(X_train, y_train)
-                        rf_pred = rf_model.predict(X_test)
-                        rf_acc = accuracy_score(y_test, rf_pred)
-                        
-                        st.session_state.trained_models['rf'] = {
-                            'model': rf_model,
-                            'accuracy': rf_acc,
-                            'predictions': rf_pred,
-                            'config': {'depth': dt_depth, 'criterion': dt_criterion, 'trees': rf_trees}
-                        }
-                        
-                        # Train Naive Bayes
-                        progress_bar.progress(75)
-                        if nb_type == "Gaussian":
-                            nb_model = GaussianNB(var_smoothing=nb_smoothing)
-                        else:
-                            nb_model = MultinomialNB(alpha=nb_smoothing)
-                        nb_model.fit(X_train, y_train)
-                        nb_pred = nb_model.predict(X_test)
-                        nb_acc = accuracy_score(y_test, nb_pred)
-                        
-                        st.session_state.trained_models['nb'] = {
-                            'model': nb_model,
-                            'accuracy': nb_acc,
-                            'predictions': nb_pred,
-                            'config': {'type': nb_type, 'smoothing': nb_smoothing}
-                        }
-                        
+                        trained_models = train_all_models(X_train, y_train, X_test, y_test, model_config)
                         progress_bar.progress(100)
                         
-                        # Calculate metrics
-                        for model_name in ['knn', 'rf', 'nb']:
-                            if model_name in st.session_state.trained_models:
-                                pred = st.session_state.trained_models[model_name]['predictions']
-                                st.session_state.trained_models[model_name]['precision'] = precision_score(y_test, pred, average='weighted', zero_division=0)
-                                st.session_state.trained_models[model_name]['recall'] = recall_score(y_test, pred, average='weighted', zero_division=0)
-                                st.session_state.trained_models[model_name]['f1'] = f1_score(y_test, pred, average='weighted', zero_division=0)
+                        st.session_state.trained_models = trained_models
                         
                         # Add to history
-                        for model_name, model_data in st.session_state.trained_models.items():
+                        for model_name, model_data in trained_models.items():
                             st.session_state.model_history.append({
                                 'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
                                 'model': model_name.upper(),
@@ -399,7 +229,7 @@ if selected_page == "Dashboard":
                         
                         st.success("✅ Models trained successfully!")
                         st.rerun()
-                    
+                        
                 except ValueError as e:
                     error_msg = str(e)
                     if "could not convert string to float" in error_msg:
@@ -414,7 +244,9 @@ if selected_page == "Dashboard":
                     st.error(f"❌ **Unexpected Error**: {str(e)}\n\nPlease check your data and try again.")
                     st.exception(e)
 
-# Data Explorer Page
+# ============================================================================
+# DATA EXPLORER PAGE
+# ============================================================================
 elif selected_page == "Data Explorer":
     st.markdown('<div class="main-header">DATA EXPLORER</div>', unsafe_allow_html=True)
     
@@ -448,14 +280,14 @@ elif selected_page == "Data Explorer":
         
         if st.session_state.target_variable:
             st.markdown("### Target Variable Distribution")
-            target_counts = st.session_state.df[st.session_state.target_variable].value_counts()
-            fig = px.bar(x=target_counts.index, y=target_counts.values, 
-                        labels={'x': st.session_state.target_variable, 'y': 'Count'})
+            fig = plot_target_distribution(st.session_state.df, st.session_state.target_variable)
             st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("Please upload a dataset first from the Dashboard page.")
 
-# Model Training Page
+# ============================================================================
+# MODEL TRAINING PAGE
+# ============================================================================
 elif selected_page == "Model Training":
     st.markdown('<div class="main-header">MODEL TRAINING</div>', unsafe_allow_html=True)
     
@@ -493,58 +325,35 @@ elif selected_page == "Model Training":
             
             for idx, (model_name, model_data) in enumerate(st.session_state.trained_models.items()):
                 with cm_cols[idx]:
-                    cm = confusion_matrix(st.session_state.y_test, model_data['predictions'])
-                    fig, ax = plt.subplots(figsize=(6, 5))
-                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-                    ax.set_title(f"{model_name.upper()} Confusion Matrix")
-                    ax.set_ylabel('Actual')
-                    ax.set_xlabel('Predicted')
+                    fig = plot_confusion_matrix(
+                        st.session_state.y_test,
+                        model_data['predictions'],
+                        model_name
+                    )
                     st.pyplot(fig)
         else:
             st.info("No models trained yet. Please train models from the Dashboard page.")
     else:
         st.warning("Please upload a dataset and train models first from the Dashboard page.")
 
-# Visualizations Page
+# ============================================================================
+# VISUALIZATIONS PAGE
+# ============================================================================
 elif selected_page == "Visualizations":
     st.markdown('<div class="main-header">VISUALIZATION DASHBOARD</div>', unsafe_allow_html=True)
     
     if st.session_state.trained_models:
         # Model Accuracy Comparison
         st.markdown("### Model Accuracy Comparison")
-        model_names = list(st.session_state.trained_models.keys())
-        accuracies = [st.session_state.trained_models[m]['accuracy']*100 for m in model_names]
-        
-        fig = px.bar(
-            x=model_names,
-            y=accuracies,
-            labels={'x': 'Model', 'y': 'Accuracy (%)'},
-            color=accuracies,
-            color_continuous_scale='Blues'
-        )
-        fig.update_layout(showlegend=False, height=400)
+        fig = plot_model_comparison(st.session_state.trained_models)
         st.plotly_chart(fig, use_container_width=True)
         
         # Feature Importance (for tree-based models)
         if 'rf' in st.session_state.trained_models:
             st.markdown("### Feature Importance (Top 10)")
             rf_model = st.session_state.trained_models['rf']['model']
-            if hasattr(rf_model, 'feature_importances_'):
-                feature_importance = pd.DataFrame({
-                    'Feature': st.session_state.selected_features,
-                    'Importance': rf_model.feature_importances_
-                }).sort_values('Importance', ascending=False).head(10)
-                
-                fig = px.bar(
-                    feature_importance,
-                    x='Importance',
-                    y='Feature',
-                    orientation='h',
-                    labels={'Importance': 'Importance Score', 'Feature': 'Feature'},
-                    color='Importance',
-                    color_continuous_scale='Viridis'
-                )
-                fig.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
+            fig = plot_feature_importance(rf_model, st.session_state.selected_features)
+            if fig:
                 st.plotly_chart(fig, use_container_width=True)
         
         # Decision Boundary Visualization
@@ -557,74 +366,33 @@ elif selected_page == "Visualizations":
                 y_feature = st.selectbox("Y-axis Feature", st.session_state.selected_features, key="y_feat")
             
             if x_feature and y_feature and x_feature != y_feature:
-                # Create meshgrid
-                X_2d = st.session_state.X_test[[x_feature, y_feature]].values
-                y_2d = st.session_state.y_test
-                
-                # Plot decision boundary for first available model
                 model_name = list(st.session_state.trained_models.keys())[0]
                 model = st.session_state.trained_models[model_name]['model']
-                
-                fig, ax = plt.subplots(figsize=(10, 8))
-                
-                # Create mesh
-                h = 0.02
-                x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
-                y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
-                xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
-                                    np.arange(y_min, y_max, h))
-                
-                # Get full feature set for prediction
-                mesh_points = np.c_[xx.ravel(), yy.ravel()]
-                # Create full feature array (use mean for other features)
-                full_mesh = np.tile(st.session_state.X_test.mean().values, (len(mesh_points), 1))
-                x_idx = st.session_state.selected_features.index(x_feature)
-                y_idx = st.session_state.selected_features.index(y_feature)
-                full_mesh[:, x_idx] = mesh_points[:, 0]
-                full_mesh[:, y_idx] = mesh_points[:, 1]
-                
-                Z = model.predict(full_mesh)
-                Z = Z.reshape(xx.shape)
-                
-                ax.contourf(xx, yy, Z, alpha=0.4, cmap=plt.cm.RdYlBu)
-                
-                # Plot points
-                scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=y_2d, cmap=plt.cm.RdYlBu, edgecolors='black')
-                ax.set_xlabel(x_feature)
-                ax.set_ylabel(y_feature)
-                ax.set_title(f"Decision Boundary - {model_name.upper()}")
-                plt.colorbar(scatter, ax=ax)
+                fig = plot_decision_boundary(
+                    model,
+                    st.session_state.X_test,
+                    st.session_state.y_test,
+                    st.session_state.selected_features,
+                    x_feature,
+                    y_feature
+                )
                 st.pyplot(fig)
         
         # ROC Curve (for binary classification)
-        if len(np.unique(st.session_state.y_test)) == 2:
+        fig = plot_roc_curve(
+            st.session_state.trained_models,
+            st.session_state.X_test,
+            st.session_state.y_test
+        )
+        if fig:
             st.markdown("### ROC Curve")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', 
-                                    name='Random', line=dict(dash='dash', color='gray')))
-            
-            for model_name, model_data in st.session_state.trained_models.items():
-                try:
-                    model = model_data['model']
-                    y_pred_proba = model.predict_proba(st.session_state.X_test)[:, 1]
-                    fpr, tpr, _ = roc_curve(st.session_state.y_test, y_pred_proba)
-                    auc = roc_auc_score(st.session_state.y_test, y_pred_proba)
-                    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', 
-                                            name=f"{model_name.upper()} (AUC={auc:.3f})"))
-                except:
-                    pass
-            
-            fig.update_layout(
-                xaxis_title='False Positive Rate',
-                yaxis_title='True Positive Rate',
-                title='ROC Curve',
-                height=500
-            )
             st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("Please train models first from the Dashboard page.")
 
-# Predictions Page
+# ============================================================================
+# PREDICTIONS PAGE
+# ============================================================================
 elif selected_page == "Predictions":
     st.markdown('<div class="main-header">MAKE PREDICTIONS</div>', unsafe_allow_html=True)
     
@@ -638,7 +406,6 @@ elif selected_page == "Predictions":
             with cols[idx]:
                 # Check if feature is categorical
                 if feature in st.session_state.feature_encoders:
-                    # Get unique values for categorical feature
                     unique_vals = st.session_state.df[feature].unique().tolist()
                     input_values[feature] = st.selectbox(
                         feature,
@@ -646,7 +413,6 @@ elif selected_page == "Predictions":
                         key=f"pred_{feature}"
                     )
                 else:
-                    # Numerical feature
                     mean_val = float(st.session_state.df[feature].mean()) if feature in st.session_state.df.columns else 0.0
                     input_values[feature] = st.number_input(
                         feature,
@@ -655,38 +421,22 @@ elif selected_page == "Predictions":
                     )
         
         if st.button("🔮 PREDICT", type="primary"):
-            # Prepare input array with proper encoding
-            input_row = []
-            for feature in st.session_state.selected_features:
-                if feature in st.session_state.feature_encoders:
-                    # Encode categorical feature
-                    encoder = st.session_state.feature_encoders[feature]
-                    try:
-                        encoded_val = encoder.transform([str(input_values[feature])])[0]
-                        input_row.append(encoded_val)
-                    except:
-                        # If value not seen during training, use most common value
-                        input_row.append(0)
-                else:
-                    input_row.append(float(input_values[feature]))
+            input_array = prepare_prediction_input(
+                input_values,
+                st.session_state.selected_features,
+                st.session_state.feature_encoders
+            )
             
-            input_array = np.array([input_row])
-            
-            predictions = {}
-            for model_name, model_data in st.session_state.trained_models.items():
-                model = model_data['model']
-                pred = model.predict(input_array)[0]
-                pred_proba = model.predict_proba(input_array)[0]
-                confidence = max(pred_proba) * 100
-                pred_class = st.session_state.label_encoder.inverse_transform([pred])[0]
-                predictions[model_name] = {
-                    'class': pred_class,
-                    'confidence': confidence
-                }
+            predictions = predict_manual(
+                st.session_state.trained_models,
+                input_array,
+                st.session_state.label_encoder
+            )
             
             # Display results
-            st.success(f"**Result:** {predictions[list(predictions.keys())[0]]['class']} "
-                      f"({predictions[list(predictions.keys())[0]]['confidence']:.1f}% confidence)")
+            first_model = list(predictions.keys())[0]
+            st.success(f"**Result:** {predictions[first_model]['class']} "
+                      f"({predictions[first_model]['confidence']:.1f}% confidence)")
             
             st.markdown("#### Model Predictions:")
             for model_name, pred_data in predictions.items():
@@ -701,50 +451,34 @@ elif selected_page == "Predictions":
         if batch_file is not None:
             try:
                 batch_df = pd.read_csv(batch_file)
+                results_df = predict_batch(
+                    st.session_state.trained_models,
+                    batch_df,
+                    st.session_state.selected_features,
+                    st.session_state.feature_encoders,
+                    st.session_state.label_encoder
+                )
                 
-                # Check if required features are present
-                missing_features = [f for f in st.session_state.selected_features if f not in batch_df.columns]
-                if missing_features:
-                    st.error(f"Missing features: {', '.join(missing_features)}")
-                else:
-                    batch_X = batch_df[st.session_state.selected_features]
-                    
-                    batch_predictions = {}
-                    for model_name, model_data in st.session_state.trained_models.items():
-                        model = model_data['model']
-                        preds = model.predict(batch_X)
-                        pred_probas = model.predict_proba(batch_X)
-                        confidences = np.max(pred_probas, axis=1) * 100
-                        pred_classes = st.session_state.label_encoder.inverse_transform(preds)
-                        batch_predictions[f"{model_name.upper()}_Pred"] = pred_classes
-                        batch_predictions[f"{model_name.upper()}_Confidence"] = confidences
-                    
-                    # Create results dataframe
-                    results_df = batch_df.copy()
-                    for key, values in batch_predictions.items():
-                        results_df[key] = values
-                    
-                    # Determine final prediction (majority vote)
-                    pred_cols = [col for col in results_df.columns if col.endswith('_Pred')]
-                    results_df['Final_Pred'] = results_df[pred_cols].mode(axis=1)[0]
-                    results_df['Final_Confidence'] = results_df[[col for col in results_df.columns if col.endswith('_Confidence')]].mean(axis=1)
-                    
-                    st.dataframe(results_df, use_container_width=True)
-                    
-                    # Download button
-                    csv = results_df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 DOWNLOAD RESULTS",
-                        data=csv,
-                        file_name=f"predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
+                st.dataframe(results_df, use_container_width=True)
+                
+                # Download button
+                csv, filename = export_predictions(results_df)
+                st.download_button(
+                    label="📥 DOWNLOAD RESULTS",
+                    data=csv,
+                    file_name=filename,
+                    mime="text/csv"
+                )
+            except ValueError as e:
+                st.error(str(e))
             except Exception as e:
                 st.error(f"Error processing batch file: {str(e)}")
     else:
         st.warning("Please train models first from the Dashboard page.")
 
-# Model History Page
+# ============================================================================
+# MODEL HISTORY PAGE
+# ============================================================================
 elif selected_page == "Model History":
     st.markdown('<div class="main-header">MODEL HISTORY</div>', unsafe_allow_html=True)
     
@@ -758,7 +492,9 @@ elif selected_page == "Model History":
     else:
         st.info("No model history available yet.")
 
-# Settings Page
+# ============================================================================
+# SETTINGS PAGE
+# ============================================================================
 elif selected_page == "Settings":
     st.markdown('<div class="main-header">SETTINGS</div>', unsafe_allow_html=True)
     
@@ -779,6 +515,7 @@ elif selected_page == "Settings":
         if st.session_state.trained_models:
             model_to_export = st.selectbox("Select model to export", list(st.session_state.trained_models.keys()))
             if st.button("💾 Export Model"):
+                import pickle
                 model_data = st.session_state.trained_models[model_to_export]
                 pickle_data = pickle.dumps(model_data['model'])
                 st.download_button(
@@ -792,6 +529,7 @@ elif selected_page == "Settings":
         uploaded_model = st.file_uploader("Import Model", type=['pkl'])
         if uploaded_model:
             try:
+                import pickle
                 model = pickle.load(uploaded_model)
                 st.success("Model loaded successfully!")
             except Exception as e:
