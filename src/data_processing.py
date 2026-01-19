@@ -93,9 +93,20 @@ def preprocess_features(X, selected_features):
             # This is a categorical/text feature - encode it
             categorical_features.append(feature)
             le = LabelEncoder()
-            # Handle any NaN values in categorical data
-            X[feature] = X[feature].fillna('missing_value')
-            X[feature] = le.fit_transform(X[feature].astype(str))
+            
+            # Handle categorical dtype - convert to string first if needed
+            if X[feature].dtype.name == 'category':
+                # Convert category to string to allow adding 'missing_value'
+                X[feature] = X[feature].astype(str)
+                # Replace 'nan' strings with 'missing_value'
+                X[feature] = X[feature].replace('nan', 'missing_value')
+            else:
+                # Handle any NaN values in categorical data
+                X[feature] = X[feature].fillna('missing_value')
+            
+            # Convert to string and encode
+            X[feature] = X[feature].astype(str)
+            X[feature] = le.fit_transform(X[feature])
             feature_encoders[feature] = le
         else:
             # This is numeric, but might have some non-numeric values

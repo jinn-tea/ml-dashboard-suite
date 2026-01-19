@@ -79,10 +79,13 @@ with st.sidebar.expander("🔧 Memory Management"):
     
     # Show memory usage if psutil is available
     try:
-        from src.memory_utils import get_memory_usage
-        memory_mb = get_memory_usage()
-        if memory_mb:
-            st.info(f"Memory Usage: {memory_mb:.1f} MB")
+        from src.memory_utils import get_memory_usage, PSUTIL_AVAILABLE
+        if PSUTIL_AVAILABLE:
+            memory_mb = get_memory_usage()
+            if memory_mb:
+                st.info(f"Memory Usage: {memory_mb:.1f} MB")
+        else:
+            st.info("💡 Install 'psutil' for memory monitoring: pip install psutil")
     except:
         pass
 

@@ -5,12 +5,20 @@ Memory optimization utilities
 import streamlit as st
 import gc
 import sys
-import psutil
 import os
+
+# Try to import psutil, but make it optional
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 
 def get_memory_usage():
     """Get current memory usage in MB"""
+    if not PSUTIL_AVAILABLE:
+        return None
     try:
         process = psutil.Process(os.getpid())
         memory_mb = process.memory_info().rss / 1024 / 1024
