@@ -5,6 +5,7 @@ Interactive Machine Learning Dashboard built with Streamlit
 
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 # Import modules
@@ -13,6 +14,7 @@ from src.utils import initialize_session_state, reset_session, get_dataset_info
 from src.data_processing import (
     load_dataset, get_feature_info, prepare_training_data
 )
+from src.memory_utils import check_dataset_size, optimize_dataframe, clear_large_objects, cleanup_memory
 from src.model_training import train_all_models
 from src.visualizations import (
     plot_model_comparison, plot_feature_importance, plot_decision_boundary,
@@ -58,7 +60,31 @@ if dataset_info:
 
 if st.sidebar.button("🔄 NEW SESSION", use_container_width=True):
     reset_session()
+    cleanup_memory()
     st.rerun()
+
+# Memory management section in sidebar
+st.sidebar.markdown("---")
+with st.sidebar.expander("🔧 Memory Management"):
+    if st.button("🗑️ Clear Large Objects"):
+        cleared = clear_large_objects()
+        if cleared:
+            st.success(f"Cleared: {', '.join(cleared)}")
+        else:
+            st.info("No large objects to clear")
+    
+    if st.button("🧹 Force Garbage Collection"):
+        cleanup_memory()
+        st.success("Memory cleaned!")
+    
+    # Show memory usage if psutil is available
+    try:
+        from src.memory_utils import get_memory_usage
+        memory_mb = get_memory_usage()
+        if memory_mb:
+            st.info(f"Memory Usage: {memory_mb:.1f} MB")
+    except:
+        pass
 
 # ============================================================================
 # DASHBOARD PAGE
@@ -71,12 +97,22 @@ if selected_page == "Dashboard":
     uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'], key="file_uploader")
     
     if uploaded_file is not None:
-        df, error = load_dataset(uploaded_file)
+        df, error = load_dataset(uploaded_file, max_size_mb=500)
         if error:
             st.error(f"Error loading file: {error}")
         else:
-            st.session_state.df = df
-            st.session_state.dataset = uploaded_file.name
+            # Check dataset size
+            is_valid, size_error = check_dataset_size(df, max_rows=100000, max_cols=100)
+            if not is_valid:
+                st.error(size_error)
+            else:
+                # Optimize dataframe memory
+                df = optimize_dataframe(df)
+                st.session_state.df = df
+                st.session_state.dataset = uploaded_file.name
+                
+                # Force garbage collection after loading
+                cleanup_memory()
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -325,12 +361,19 @@ elif selected_page == "Model Training":
             
             for idx, (model_name, model_data) in enumerate(st.session_state.trained_models.items()):
                 with cm_cols[idx]:
+                    # Recompute predictions if not stored (memory optimization)
+                    if 'predictions' in model_data:
+                        predictions = model_data['predictions']
+                    else:
+                        predictions = model_data['model'].predict(st.session_state.X_test)
+                    
                     fig = plot_confusion_matrix(
                         st.session_state.y_test,
-                        model_data['predictions'],
+                        predictions,
                         model_name
                     )
                     st.pyplot(fig)
+                    plt.close(fig)  # Close figure to free memory
         else:
             st.info("No models trained yet. Please train models from the Dashboard page.")
     else:
@@ -374,9 +417,11 @@ elif selected_page == "Visualizations":
                     st.session_state.y_test,
                     st.session_state.selected_features,
                     x_feature,
-                    y_feature
+                    y_feature,
+                    max_points=5000  # Limit points for memory optimization
                 )
                 st.pyplot(fig)
+                plt.close(fig)  # Close figure to free memory
         
         # ROC Curve (for binary classification)
         fig = plot_roc_curve(

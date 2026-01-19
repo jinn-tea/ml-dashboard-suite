@@ -8,18 +8,37 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
 
-def load_dataset(uploaded_file):
+def load_dataset(uploaded_file, max_size_mb=500, sample_size=None):
     """
-    Load dataset from uploaded file
+    Load dataset from uploaded file with memory optimization
     
     Args:
         uploaded_file: Streamlit uploaded file object
+        max_size_mb: Maximum file size in MB
+        sample_size: Optional sample size for large datasets
         
     Returns:
-        pandas DataFrame
+        Tuple of (DataFrame, error_message)
     """
     try:
-        df = pd.read_csv(uploaded_file)
+        # Check file size
+        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        if file_size_mb > max_size_mb:
+            return None, f"File too large: {file_size_mb:.1f} MB. Maximum allowed: {max_size_mb} MB. Please use a smaller file."
+        
+        # Read CSV with optimized settings
+        df = pd.read_csv(
+            uploaded_file,
+            low_memory=False,  # Avoid mixed type warnings
+            nrows=sample_size if sample_size else None  # Limit rows if sampling
+        )
+        
+        # Optimize dataframe
+        if sample_size is None and len(df) > 100000:
+            # Auto-sample very large datasets
+            df = df.sample(n=50000, random_state=42).reset_index(drop=True)
+            return df, f"⚠️ Dataset automatically sampled to 50,000 rows for performance. Original size was {len(df):,} rows."
+        
         return df, None
     except Exception as e:
         return None, str(e)

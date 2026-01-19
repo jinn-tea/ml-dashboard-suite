@@ -135,7 +135,7 @@ def calculate_metrics(y_test, predictions):
     }
 
 
-def train_all_models(X_train, y_train, X_test, y_test, config):
+def train_all_models(X_train, y_train, X_test, y_test, config, store_predictions=True):
     """
     Train all selected models
     
@@ -145,6 +145,7 @@ def train_all_models(X_train, y_train, X_test, y_test, config):
         X_test: Test features
         y_test: Test labels
         config: Dictionary with model configurations
+        store_predictions: Whether to store predictions (set False to save memory)
         
     Returns:
         Dictionary with all trained models
@@ -154,34 +155,46 @@ def train_all_models(X_train, y_train, X_test, y_test, config):
     # Train k-NN
     if 'knn' in config:
         knn_config = config['knn']
-        trained_models['knn'] = train_knn(
+        model_data = train_knn(
             X_train, y_train, X_test, y_test,
             knn_config['k'], knn_config['metric'], knn_config['weighted']
         )
         # Add metrics
-        metrics = calculate_metrics(y_test, trained_models['knn']['predictions'])
-        trained_models['knn'].update(metrics)
+        metrics = calculate_metrics(y_test, model_data['predictions'])
+        model_data.update(metrics)
+        # Optionally remove predictions to save memory
+        if not store_predictions:
+            del model_data['predictions']
+        trained_models['knn'] = model_data
     
     # Train Random Forest
     if 'rf' in config:
         rf_config = config['rf']
-        trained_models['rf'] = train_random_forest(
+        model_data = train_random_forest(
             X_train, y_train, X_test, y_test,
             rf_config['trees'], rf_config['depth'], rf_config['criterion']
         )
         # Add metrics
-        metrics = calculate_metrics(y_test, trained_models['rf']['predictions'])
-        trained_models['rf'].update(metrics)
+        metrics = calculate_metrics(y_test, model_data['predictions'])
+        model_data.update(metrics)
+        # Optionally remove predictions to save memory
+        if not store_predictions:
+            del model_data['predictions']
+        trained_models['rf'] = model_data
     
     # Train Naive Bayes
     if 'nb' in config:
         nb_config = config['nb']
-        trained_models['nb'] = train_naive_bayes(
+        model_data = train_naive_bayes(
             X_train, y_train, X_test, y_test,
             nb_config['type'], nb_config['smoothing']
         )
         # Add metrics
-        metrics = calculate_metrics(y_test, trained_models['nb']['predictions'])
-        trained_models['nb'].update(metrics)
+        metrics = calculate_metrics(y_test, model_data['predictions'])
+        model_data.update(metrics)
+        # Optionally remove predictions to save memory
+        if not store_predictions:
+            del model_data['predictions']
+        trained_models['nb'] = model_data
     
     return trained_models

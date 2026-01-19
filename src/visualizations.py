@@ -68,9 +68,9 @@ def plot_feature_importance(model, selected_features, top_n=10):
     return fig
 
 
-def plot_decision_boundary(model, X_test, y_test, selected_features, x_feature, y_feature):
+def plot_decision_boundary(model, X_test, y_test, selected_features, x_feature, y_feature, max_points=5000):
     """
-    Plot decision boundary visualization
+    Plot decision boundary visualization (memory optimized)
     
     Args:
         model: Trained model
@@ -79,43 +79,89 @@ def plot_decision_boundary(model, X_test, y_test, selected_features, x_feature, 
         selected_features: List of feature names
         x_feature: Feature name for x-axis
         y_feature: Feature name for y-axis
+        max_points: Maximum number of mesh points (for memory optimization)
         
     Returns:
         Matplotlib figure
     """
+    # Sample test data if too large
+    if len(X_test) > max_points:
+        sample_idx = np.random.choice(len(X_test), size=max_points, replace=False)
+        X_test_sampled = X_test.iloc[sample_idx]
+        y_test_sampled = y_test[sample_idx]
+    else:
+        X_test_sampled = X_test
+        y_test_sampled = y_test
+    
     # Create meshgrid
-    X_2d = X_test[[x_feature, y_feature]].values
-    y_2d = y_test
+    X_2d = X_test_sampled[[x_feature, y_feature]].values
+    y_2d = y_test_sampled
     
     fig, ax = plt.subplots(figsize=(10, 8))
     
-    # Create mesh
-    h = 0.02
-    x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
-    y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
-    xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
-                        np.arange(y_min, y_max, h))
+    # Create mesh with adaptive resolution based on data range
+    x_range = X_2d[:, 0].max() - X_2d[:, 0].min()
+    y_range = X_2d[:, 1].max() - X_2d[:, 1].min()
+    
+    # Adjust mesh step size to limit total points
+    h = max(x_range, y_range) / 100  # Adaptive resolution
+    
+    x_min, x_max = X_2d[:, 0].min() - 0.1*x_range, X_2d[:, 0].max() + 0.1*x_range
+    y_min, y_max = X_2d[:, 1].min() - 0.1*y_range, X_2d[:, 1].max() + 0.1*y_range
+    
+    # Limit mesh grid size
+    x_steps = min(150, int((x_max - x_min) / h))
+    y_steps = min(150, int((y_max - y_min) / h))
+    
+    xx, yy = np.meshgrid(
+        np.linspace(x_min, x_max, x_steps),
+        np.linspace(y_min, y_max, y_steps)
+    )
     
     # Get full feature set for prediction
     mesh_points = np.c_[xx.ravel(), yy.ravel()]
+    # Limit mesh points if too many
+    if len(mesh_points) > 10000:
+        mesh_idx = np.random.choice(len(mesh_points), size=10000, replace=False)
+        mesh_points = mesh_points[mesh_idx]
+        need_resample = True
+    else:
+        need_resample = False
+    
     # Create full feature array (use mean for other features)
-    full_mesh = np.tile(X_test.mean().values, (len(mesh_points), 1))
+    full_mesh = np.tile(X_test_sampled.mean().values, (len(mesh_points), 1))
     x_idx = selected_features.index(x_feature)
     y_idx = selected_features.index(y_feature)
     full_mesh[:, x_idx] = mesh_points[:, 0]
     full_mesh[:, y_idx] = mesh_points[:, 1]
     
     Z = model.predict(full_mesh)
-    Z = Z.reshape(xx.shape)
     
-    ax.contourf(xx, yy, Z, alpha=0.4, cmap=plt.cm.RdYlBu)
+    if need_resample:
+        # Reconstruct full grid for display
+        Z_full = np.zeros(xx.size)
+        Z_full[mesh_idx] = Z
+        Z = Z_full.reshape(xx.shape)
+    else:
+        Z = Z.reshape(xx.shape)
     
-    # Plot points
-    scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=y_2d, cmap=plt.cm.RdYlBu, edgecolors='black')
+    ax.contourf(xx, yy, Z, alpha=0.4, cmap=plt.cm.RdYlBu, levels=10)
+    
+    # Plot points (sample if too many)
+    if len(X_2d) > 2000:
+        plot_idx = np.random.choice(len(X_2d), size=2000, replace=False)
+        scatter = ax.scatter(X_2d[plot_idx, 0], X_2d[plot_idx, 1], 
+                           c=y_2d[plot_idx], cmap=plt.cm.RdYlBu, 
+                           edgecolors='black', s=20, alpha=0.6)
+    else:
+        scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=y_2d, 
+                           cmap=plt.cm.RdYlBu, edgecolors='black', s=20)
+    
     ax.set_xlabel(x_feature)
     ax.set_ylabel(y_feature)
     ax.set_title(f"Decision Boundary - {type(model).__name__}")
     plt.colorbar(scatter, ax=ax)
+    plt.tight_layout()
     
     return fig
 
@@ -184,6 +230,8 @@ def plot_confusion_matrix(y_test, predictions, model_name):
     ax.set_title(f"{model_name.upper()} Confusion Matrix")
     ax.set_ylabel('Actual')
     ax.set_xlabel('Predicted')
+    # Close figure to free memory after display
+    plt.tight_layout()
     return fig
 
 
