@@ -224,6 +224,26 @@ if selected_page == "Dashboard":
             nb_type = st.radio("Type", ["Gaussian", "Multinomial"], key="nb_type")
             nb_smoothing = st.number_input("Var Smooth", value=1e-9, format="%e", key="nb_smoothing")
         
+        # Data Type Info
+        if st.session_state.selected_features:
+            st.markdown("---")
+            st.markdown("### 📋 Selected Features Info")
+            feature_info = []
+            for feat in st.session_state.selected_features:
+                dtype = st.session_state.df[feat].dtype
+                sample_val = str(st.session_state.df[feat].iloc[0]) if len(st.session_state.df) > 0 else "N/A"
+                is_numeric = pd.api.types.is_numeric_dtype(st.session_state.df[feat])
+                feature_info.append({
+                    'Feature': feat,
+                    'Type': 'Numeric' if is_numeric else 'Text/Categorical',
+                    'Data Type': str(dtype),
+                    'Sample Value': sample_val[:50] + '...' if len(sample_val) > 50 else sample_val
+                })
+            info_df = pd.DataFrame(feature_info)
+            st.dataframe(info_df, use_container_width=True, hide_index=True)
+            if not all(pd.api.types.is_numeric_dtype(st.session_state.df[feat]) for feat in st.session_state.selected_features):
+                st.info("ℹ️ Some features are text/categorical and will be automatically encoded during training.")
+        
         # Training Settings
         st.markdown("---")
         st.markdown("### 🎯 TRAINING SETTINGS")
@@ -235,131 +255,164 @@ if selected_page == "Dashboard":
         if st.button("🚀 TRAIN MODEL", type="primary", use_container_width=True):
             if not st.session_state.selected_features or not st.session_state.target_variable:
                 st.error("Please select features and target variable first!")
+            elif st.session_state.target_variable in st.session_state.selected_features:
+                st.error("Target variable cannot be in the feature list! Please remove it from selected features.")
             else:
-                with st.spinner("Training models..."):
-                    progress_bar = st.progress(0)
-                    
-                    # Prepare data
-                    X = st.session_state.df[st.session_state.selected_features].copy()
-                    y = st.session_state.df[st.session_state.target_variable].copy()
-                    
-                    # Check and encode categorical features
-                    categorical_features = []
-                    numerical_features = []
-                    feature_encoders = {}
-                    
-                    for feature in st.session_state.selected_features:
-                        if X[feature].dtype == 'object' or X[feature].dtype.name == 'category':
-                            categorical_features.append(feature)
-                            # Use LabelEncoder for categorical features
-                            le = LabelEncoder()
-                            X[feature] = le.fit_transform(X[feature].astype(str))
-                            feature_encoders[feature] = le
+                try:
+                    with st.spinner("Training models..."):
+                        progress_bar = st.progress(0)
+                        
+                        # Prepare data
+                        X = st.session_state.df[st.session_state.selected_features].copy()
+                        y = st.session_state.df[st.session_state.target_variable].copy()
+                        
+                        # Check and encode categorical features - more robust detection
+                        categorical_features = []
+                        numerical_features = []
+                        feature_encoders = {}
+                        
+                        for feature in st.session_state.selected_features:
+                            # Try to convert to numeric first
+                            numeric_series = pd.to_numeric(X[feature], errors='coerce')
+                            
+                            # Check if conversion was successful (not all NaN)
+                            if numeric_series.isna().all() or X[feature].dtype == 'object' or X[feature].dtype.name == 'category':
+                                # This is a categorical/text feature - encode it
+                                categorical_features.append(feature)
+                                le = LabelEncoder()
+                                # Handle any NaN values in categorical data
+                                X[feature] = X[feature].fillna('missing_value')
+                                X[feature] = le.fit_transform(X[feature].astype(str))
+                                feature_encoders[feature] = le
+                            else:
+                                # This is numeric, but might have some non-numeric values
+                                numerical_features.append(feature)
+                                X[feature] = numeric_series
+                        
+                        # Fill any NaN values in numerical features with mean
+                        for feature in numerical_features:
+                            if X[feature].isna().any():
+                                X[feature] = X[feature].fillna(X[feature].mean())
+                        
+                        # Ensure all columns are numeric (should be after encoding)
+                        X = X.astype(float)
+                        
+                        # Final check - ensure no NaN or infinite values
+                        if X.isnull().any().any() or np.isinf(X).any().any():
+                            X = X.replace([np.inf, -np.inf], np.nan)
+                            X = X.fillna(X.mean())
+                        
+                        # Encode target if needed
+                        le = LabelEncoder()
+                        y_encoded = le.fit_transform(y.astype(str))
+                        
+                        # Train-test split
+                        test_size = (100 - train_test_split_ratio) / 100
+                        X_train, X_test, y_train, y_test = train_test_split(
+                            X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
+                        )
+                        
+                        st.session_state.X_train = X_train
+                        st.session_state.X_test = X_test
+                        st.session_state.y_train = y_train
+                        st.session_state.y_test = y_test
+                        st.session_state.label_encoder = le
+                        st.session_state.feature_encoders = feature_encoders
+                        
+                        # Show encoding info
+                        if categorical_features:
+                            st.info(f"📝 Encoded {len(categorical_features)} categorical feature(s): {', '.join(categorical_features)}")
+                        
+                        # Train k-NN
+                        progress_bar.progress(25)
+                        metric_map = {"Euclidean": "euclidean", "Manhattan": "manhattan", "Minkowski": "minkowski"}
+                        knn_model = KNeighborsClassifier(
+                            n_neighbors=knn_k,
+                            metric=metric_map[knn_metric],
+                            weights="distance" if knn_weighted else "uniform"
+                        )
+                        knn_model.fit(X_train, y_train)
+                        knn_pred = knn_model.predict(X_test)
+                        knn_acc = accuracy_score(y_test, knn_pred)
+                        
+                        st.session_state.trained_models['knn'] = {
+                            'model': knn_model,
+                            'accuracy': knn_acc,
+                            'predictions': knn_pred,
+                            'config': {'k': knn_k, 'metric': knn_metric, 'weighted': knn_weighted}
+                        }
+                        
+                        # Train Random Forest
+                        progress_bar.progress(50)
+                        rf_model = RandomForestClassifier(
+                            n_estimators=rf_trees,
+                            max_depth=dt_depth,
+                            criterion=dt_criterion.lower(),
+                            random_state=42
+                        )
+                        rf_model.fit(X_train, y_train)
+                        rf_pred = rf_model.predict(X_test)
+                        rf_acc = accuracy_score(y_test, rf_pred)
+                        
+                        st.session_state.trained_models['rf'] = {
+                            'model': rf_model,
+                            'accuracy': rf_acc,
+                            'predictions': rf_pred,
+                            'config': {'depth': dt_depth, 'criterion': dt_criterion, 'trees': rf_trees}
+                        }
+                        
+                        # Train Naive Bayes
+                        progress_bar.progress(75)
+                        if nb_type == "Gaussian":
+                            nb_model = GaussianNB(var_smoothing=nb_smoothing)
                         else:
-                            numerical_features.append(feature)
-                            # Convert to numeric, handling any remaining non-numeric values
-                            X[feature] = pd.to_numeric(X[feature], errors='coerce')
+                            nb_model = MultinomialNB(alpha=nb_smoothing)
+                        nb_model.fit(X_train, y_train)
+                        nb_pred = nb_model.predict(X_test)
+                        nb_acc = accuracy_score(y_test, nb_pred)
+                        
+                        st.session_state.trained_models['nb'] = {
+                            'model': nb_model,
+                            'accuracy': nb_acc,
+                            'predictions': nb_pred,
+                            'config': {'type': nb_type, 'smoothing': nb_smoothing}
+                        }
+                        
+                        progress_bar.progress(100)
+                        
+                        # Calculate metrics
+                        for model_name in ['knn', 'rf', 'nb']:
+                            if model_name in st.session_state.trained_models:
+                                pred = st.session_state.trained_models[model_name]['predictions']
+                                st.session_state.trained_models[model_name]['precision'] = precision_score(y_test, pred, average='weighted', zero_division=0)
+                                st.session_state.trained_models[model_name]['recall'] = recall_score(y_test, pred, average='weighted', zero_division=0)
+                                st.session_state.trained_models[model_name]['f1'] = f1_score(y_test, pred, average='weighted', zero_division=0)
+                        
+                        # Add to history
+                        for model_name, model_data in st.session_state.trained_models.items():
+                            st.session_state.model_history.append({
+                                'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                'model': model_name.upper(),
+                                'accuracy': f"{model_data['accuracy']*100:.2f}%",
+                                'dataset': st.session_state.dataset
+                            })
+                        
+                        st.success("✅ Models trained successfully!")
+                        st.rerun()
                     
-                    # Fill any NaN values created during conversion
-                    X = X.fillna(X.mean(numeric_only=True))
-                    
-                    # Encode target if needed
-                    le = LabelEncoder()
-                    y_encoded = le.fit_transform(y.astype(str))
-                    
-                    # Train-test split
-                    test_size = (100 - train_test_split_ratio) / 100
-                    X_train, X_test, y_train, y_test = train_test_split(
-                        X, y_encoded, test_size=test_size, random_state=42, stratify=y_encoded
-                    )
-                    
-                    st.session_state.X_train = X_train
-                    st.session_state.X_test = X_test
-                    st.session_state.y_train = y_train
-                    st.session_state.y_test = y_test
-                    st.session_state.label_encoder = le
-                    st.session_state.feature_encoders = feature_encoders
-                    
-                    # Show encoding info
-                    if categorical_features:
-                        st.info(f"📝 Encoded {len(categorical_features)} categorical feature(s): {', '.join(categorical_features)}")
-                    
-                    # Train k-NN
-                    progress_bar.progress(25)
-                    metric_map = {"Euclidean": "euclidean", "Manhattan": "manhattan", "Minkowski": "minkowski"}
-                    knn_model = KNeighborsClassifier(
-                        n_neighbors=knn_k,
-                        metric=metric_map[knn_metric],
-                        weights="distance" if knn_weighted else "uniform"
-                    )
-                    knn_model.fit(X_train, y_train)
-                    knn_pred = knn_model.predict(X_test)
-                    knn_acc = accuracy_score(y_test, knn_pred)
-                    
-                    st.session_state.trained_models['knn'] = {
-                        'model': knn_model,
-                        'accuracy': knn_acc,
-                        'predictions': knn_pred,
-                        'config': {'k': knn_k, 'metric': knn_metric, 'weighted': knn_weighted}
-                    }
-                    
-                    # Train Random Forest
-                    progress_bar.progress(50)
-                    rf_model = RandomForestClassifier(
-                        n_estimators=rf_trees,
-                        max_depth=dt_depth,
-                        criterion=dt_criterion.lower(),
-                        random_state=42
-                    )
-                    rf_model.fit(X_train, y_train)
-                    rf_pred = rf_model.predict(X_test)
-                    rf_acc = accuracy_score(y_test, rf_pred)
-                    
-                    st.session_state.trained_models['rf'] = {
-                        'model': rf_model,
-                        'accuracy': rf_acc,
-                        'predictions': rf_pred,
-                        'config': {'depth': dt_depth, 'criterion': dt_criterion, 'trees': rf_trees}
-                    }
-                    
-                    # Train Naive Bayes
-                    progress_bar.progress(75)
-                    if nb_type == "Gaussian":
-                        nb_model = GaussianNB(var_smoothing=nb_smoothing)
+                except ValueError as e:
+                    error_msg = str(e)
+                    if "could not convert string to float" in error_msg:
+                        st.error("❌ **Data Type Error**: Some selected features contain text/string values that cannot be converted to numbers. "
+                                "Please either:\n"
+                                "1. Remove text columns from your feature selection, OR\n"
+                                "2. Ensure all selected features are numeric or can be encoded as categories.\n\n"
+                                f"Error details: {error_msg}")
                     else:
-                        nb_model = MultinomialNB(alpha=nb_smoothing)
-                    nb_model.fit(X_train, y_train)
-                    nb_pred = nb_model.predict(X_test)
-                    nb_acc = accuracy_score(y_test, nb_pred)
-                    
-                    st.session_state.trained_models['nb'] = {
-                        'model': nb_model,
-                        'accuracy': nb_acc,
-                        'predictions': nb_pred,
-                        'config': {'type': nb_type, 'smoothing': nb_smoothing}
-                    }
-                    
-                    progress_bar.progress(100)
-                    
-                    # Calculate metrics
-                    for model_name in ['knn', 'rf', 'nb']:
-                        if model_name in st.session_state.trained_models:
-                            pred = st.session_state.trained_models[model_name]['predictions']
-                            st.session_state.trained_models[model_name]['precision'] = precision_score(y_test, pred, average='weighted', zero_division=0)
-                            st.session_state.trained_models[model_name]['recall'] = recall_score(y_test, pred, average='weighted', zero_division=0)
-                            st.session_state.trained_models[model_name]['f1'] = f1_score(y_test, pred, average='weighted', zero_division=0)
-                    
-                    # Add to history
-                    for model_name, model_data in st.session_state.trained_models.items():
-                        st.session_state.model_history.append({
-                            'date': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            'model': model_name.upper(),
-                            'accuracy': f"{model_data['accuracy']*100:.2f}%",
-                            'dataset': st.session_state.dataset
-                        })
-                    
-                    st.success("✅ Models trained successfully!")
-                    st.rerun()
+                        st.error(f"❌ **Training Error**: {error_msg}")
+                except Exception as e:
+                    st.error(f"❌ **Unexpected Error**: {str(e)}\n\nPlease check your data and try again.")
+                    st.exception(e)
 
 # Data Explorer Page
 elif selected_page == "Data Explorer":
